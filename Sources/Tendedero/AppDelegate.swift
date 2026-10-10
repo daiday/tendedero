@@ -63,6 +63,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         set { UserDefaults.standard.set(!newValue, forKey: "quietHang") }
     }
 
+    /// Hang every file on the Desktop, not just screenshots: the line
+    /// becomes the Desktop's view of itself, and the cross on a file moves
+    /// it to the Trash, where it can always be brought back from. On by
+    /// default in this fork.
+    static var hangDesktopFiles: Bool {
+        get { (UserDefaults.standard.object(forKey: "hangDesktopFiles") as? Bool) ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "hangDesktopFiles") }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let host = NSHostingView(rootView: LineView(line: line))
         host.sizingOptions = []
@@ -148,18 +157,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         watcher?.stop()
         safetyWatcher?.stop()
         safetyWatcher = nil
+        // With Hang Desktop files on, the Desktop watcher takes every file,
+        // the ones already there included, and the line comes down to show
+        // them.
+        let desktop = Self.hangDesktopFiles
+        let onNew: (URL) -> Void = { [weak self] url in self?.hangCapture(url) }
+        let onChange: () -> Void = { [weak self] in self?.line.prune() }
+        let onExisting: (([URL]) -> Void)? = desktop ? { [weak self] urls in
+            guard let self else { return }
+            self.line.adopt(urls)
+            if self.line.liveCount > 0 { self.comeDown(on: nil) }
+        } : nil
         watcher = ScreenshotWatcher(
-            onNew: { [weak self] url in self?.hangCapture(url) },
-            onChange: { [weak self] in self?.line.prune() })
+            anyFile: desktop, adoptExisting: desktop,
+            onNew: onNew, onExisting: onExisting, onChange: onChange)
         watcher.start()
         if Inbox.isEnabled, watcher.folder.standardizedFileURL != ScreenshotWatcher.desktop.standardizedFileURL {
             let safety = ScreenshotWatcher(
                 folder: ScreenshotWatcher.desktop,
-                onNew: { [weak self] url in
-                    log.notice("Screenshot landed on the Desktop despite inbox mode: \(url.lastPathComponent, privacy: .public)")
-                    self?.hangCapture(url)
-                },
-                onChange: { [weak self] in self?.line.prune() })
+                anyFile: desktop, adoptExisting: desktop,
+                onNew: onNew, onExisting: onExisting, onChange: onChange)
             safety.start()
             safetyWatcher = safety
         }
@@ -212,6 +229,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func setInbox(_ on: Bool) {
         Inbox.isEnabled = on
         if on { Inbox.apply() } else { Inbox.restore() }
+        startWatcher()
+    }
+
+    /// Turning Desktop watching off brings its files back off the line.
+    /// They stay on the Desktop, untouched as ever.
+    private func setDesktopFiles(_ on: Bool) {
+        Self.hangDesktopFiles = on
+        if !on { line.unhangDesktopDocuments() }
         startWatcher()
     }
 
@@ -655,6 +680,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clipboard.state = ClipboardWatcher.isEnabled ? .on : .off
         clipboard.toolTip = L("Images you copy hang on the line too")
         menu.addItem(clipboard)
+
+        let desktopFiles = ClosureMenuItem(L("Hang Desktop files")) { [weak self] in
+            self?.setDesktopFiles(!Self.hangDesktopFiles)
+        }
+        desktopFiles.state = Self.hangDesktopFiles ? .on : .off
+        desktopFiles.toolTip = L("Every file on your Desktop hangs on the line. The cross moves it to the Trash.")
+        menu.addItem(desktopFiles)
 
         let bringDown = NSMenuItem(title: L("Bring the line down"), action: nil, keyEquivalent: "")
         let options = NSMenu()

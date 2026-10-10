@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import PDFKit
 import os
 
 let log = Logger(subsystem: "app.tendedero.Tendedero", category: "line")
@@ -17,6 +18,12 @@ struct Pegged: Identifiable, Equatable {
     var flying = false
     /// A screen recording rather than a screenshot.
     var isRecording: Bool { Tendedero.isRecording(url) }
+    /// A video of any kind, a movie off the Desktop included: it hangs as
+    /// its first frame with a play button over it.
+    var isVideo: Bool { PaperCard.videoExtensions.contains(url.pathExtension.lowercased()) }
+    /// Not a photo, a video or a recording: another Desktop file, hung as
+    /// a paper card.
+    var isDocument: Bool { !isVideo && !isImageFile(url) }
 
     static func == (a: Pegged, b: Pegged) -> Bool {
         a.id == b.id && a.falling == b.falling && a.flying == b.flying && a.thumb === b.thumb
@@ -100,6 +107,21 @@ final class Line: ObservableObject {
         items[i].flying = false
     }
 
+    /// The files that were already on the Desktop when watching began, hung
+    /// quietly: no flight, no sound, and none is pushed off a full line.
+    /// What does not fit simply stays on the Desktop, off the line.
+    func adopt(_ urls: [URL]) {
+        let hanging = Set(items.filter { !$0.falling }.map(\.url))
+        let room = max(0, maxItems - liveCount)
+        // `urls` run oldest to newest; the newest are the ones worth room.
+        let fresh = urls.filter { !hanging.contains($0) }.suffix(room)
+        for url in fresh {
+            guard let thumb = makeThumbnail(url) else { continue }
+            items.append(Pegged(url: url, thumb: thumb))
+        }
+        if !fresh.isEmpty { save() }
+    }
+
     /// Called just before a photo starts falling, so the fall can be drawn
     /// over the whole screen.
     var onFall: ((Pegged) -> Void)?
@@ -151,6 +173,17 @@ final class Line: ObservableObject {
         }
     }
 
+    /// When Desktop watching is turned off, its files come off the line.
+    /// Screenshots stay: they hang on their own. The files themselves are
+    /// left where they are, as ever.
+    func unhangDesktopDocuments() {
+        for item in items
+        where !item.falling && isOnDesktop(item.id)
+            && !ScreenshotWatcher.isScreenCapture(item.url) && !isRecording(item.url) {
+            drop(item.id, quietly: true)
+        }
+    }
+
     // MARK: Actions on one photo
 
     func copy(_ id: UUID) {
@@ -158,6 +191,13 @@ final class Line: ObservableObject {
         let entry = NSPasteboardItem()
         // A recording is copied as the file, which apps paste as the video.
         if !item.isRecording, let png = pngData(item.url) { entry.setData(png, forType: .png) }
+        // A text file also pastes as its text, the way Finder does.
+        if fileKind(item.url) == .text,
+           let data = try? Data(contentsOf: item.url, options: .mappedIfSafe),
+           data.count < 1_000_000,
+           let text = String(data: data, encoding: .utf8) {
+            entry.setString(text, forType: .string)
+        }
         entry.setString(item.url.absoluteString, forType: .fileURL)
         let pb = NSPasteboard.general
         pb.clearContents()
@@ -205,9 +245,23 @@ final class Line: ObservableObject {
         return item.url.standardizedFileURL.path.hasPrefix(Inbox.folder.standardizedFileURL.path + "/")
     }
 
+    /// Whether the file is on the Desktop the line watches over.
+    func isOnDesktop(_ id: UUID) -> Bool {
+        guard let item = items.first(where: { $0.id == id }) else { return false }
+        return item.url.standardizedFileURL.path
+            .hasPrefix(ScreenshotWatcher.desktop.standardizedFileURL.path + "/")
+    }
+
+    /// Files the line takes care of: Tendedero's own, and the Desktop's.
+    /// The cross on one of them moves the file to the Trash; on a file from
+    /// a watched folder it only takes it off the line.
+    func isManaged(_ id: UUID) -> Bool {
+        isInInbox(id) || isOnDesktop(id)
+    }
+
     /// The corner cross and "Take down" both end up here.
     func discard(_ id: UUID, quietly: Bool = false) {
-        if isInInbox(id) { trash(id, quietly: quietly) } else { drop(id, quietly: quietly) }
+        if isManaged(id) { trash(id, quietly: quietly) } else { drop(id, quietly: quietly) }
     }
 
     /// The oldest photo falling off a full line. Like the cross, a file from
@@ -262,10 +316,13 @@ final class Line: ObservableObject {
 
     /// Long press: open the photo in the system Markup editor. Markup does
     /// not edit video, so a recording opens in the trimming editor instead.
+    /// A document has no editor here, so it opens in the app that owns it.
     func markup(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else { return }
         if item.isRecording {
             Trim.shared.edit(item.url, size: item.thumb.size)
+        } else if item.isDocument {
+            open(id)
         } else {
             Markup.shared.edit(item.url)
         }
@@ -352,7 +409,19 @@ func isRecording(_ url: URL) -> Bool {
 /// The default size covers a card at twice its size in points, as on a
 /// Retina screen, and no more: every photo on the line keeps one in memory.
 func makeThumbnail(_ url: URL, maxPixels: Int = Int(320 * Layout.size.scale)) -> NSImage? {
-    if isRecording(url) { return firstFrame(url, maxPixels: maxPixels) }
+    switch fileKind(url) {
+    case .video:
+        // A container AVFoundation cannot read still hangs, as its icon.
+        return firstFrame(url, maxPixels: maxPixels) ?? PaperCard.iconCard(url)
+    case .photo: return photoThumbnail(url, maxPixels: maxPixels)
+    case .audio: return PaperCard.audioCard(url)
+    case .pdf: return PaperCard.pdf(url, maxPixels: maxPixels) ?? PaperCard.iconCard(url)
+    case .text: return PaperCard.textCard(url)
+    case .icon: return PaperCard.iconCard(url)
+    }
+}
+
+private func photoThumbnail(_ url: URL, maxPixels: Int) -> NSImage? {
     guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
     let options: [CFString: Any] = [
         kCGImageSourceCreateThumbnailFromImageAlways: true,

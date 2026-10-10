@@ -8,9 +8,14 @@ final class ScreenshotWatcher {
     /// On the Desktop we only accept real screenshots, tagged by macOS with an
     /// extended attribute. In a dedicated folder, any image counts.
     private let onlyTaggedScreenshots: Bool
+    /// Desktop management: every new file counts, not just captures.
+    private let acceptsAnyFile: Bool
     /// Screen recordings carry no tag, so they are only picked up in
     /// Tendedero's own folder, where nothing else is saved.
     private let acceptsRecordings: Bool
+    /// Files already in the folder when the watcher starts hang too, handed
+    /// to `onExisting` in one batch.
+    private let adoptsExisting: Bool
     private var known: Set<String>?
     private var source: DispatchSourceFileSystemObject?
     private var pending: DispatchWorkItem?
@@ -23,22 +28,36 @@ final class ScreenshotWatcher {
     /// `stop()` arrived while one of the two was still pending.
     private var stopped = false
     private let onNew: (URL) -> Void
+    /// The files found on the first listing, when the watcher adopts what was
+    /// already in the folder before it started.
+    private let onExisting: (([URL]) -> Void)?
     private let onChange: () -> Void
 
-    private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tif", "tiff", "gif", "webp"]
+    static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tif", "tiff", "gif", "webp"]
 
     static let desktop = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")
 
     /// Watches the folder macOS saves screenshots to, or a given folder.
     /// `anyImage` takes every new image even on the Desktop, for a folder
-    /// the user chose to watch.
-    init(folder: URL? = nil, anyImage: Bool = false, onNew: @escaping (URL) -> Void, onChange: @escaping () -> Void) {
+    /// the user chose to watch. `anyFile` takes every new file, and only
+    /// means anything on the Desktop, where the line is in charge of
+    /// everything; `adoptExisting` hands the files that were already there
+    /// to `onExisting` instead of passing them by.
+    init(folder: URL? = nil, anyImage: Bool = false, anyFile: Bool = false,
+         adoptExisting: Bool = false,
+         onNew: @escaping (URL) -> Void,
+         onExisting: (([URL]) -> Void)? = nil,
+         onChange: @escaping () -> Void) {
         self.onNew = onNew
+        self.onExisting = onExisting
         self.onChange = onChange
         self.folder = folder ?? Self.screenshotFolder()
-        onlyTaggedScreenshots = !anyImage
-            && self.folder.standardizedFileURL.path == Self.desktop.standardizedFileURL.path
-        acceptsRecordings = self.folder.standardizedFileURL.path == Inbox.folder.standardizedFileURL.path
+        let path = self.folder.standardizedFileURL.path
+        let isDesktop = path == Self.desktop.standardizedFileURL.path
+        acceptsAnyFile = anyFile && isDesktop
+        onlyTaggedScreenshots = !anyImage && !acceptsAnyFile && isDesktop
+        acceptsRecordings = path == Inbox.folder.standardizedFileURL.path
+        adoptsExisting = adoptExisting && acceptsAnyFile
     }
 
     static func screenshotFolder() -> URL {
@@ -146,9 +165,13 @@ final class ScreenshotWatcher {
         // The first listing adopts everything that was already there when the
         // app launched. Later ones compare against the previous listing.
         let first = known == nil
-        let base = known ?? Set(settled.map(\.path))
-        for url in candidates where !base.contains(url.path) {
-            onNew(url)
+        if first, adoptsExisting, let onExisting {
+            onExisting(candidates)
+        } else {
+            let base = known ?? Set(settled.map(\.path))
+            for url in candidates where !base.contains(url.path) {
+                onNew(url)
+            }
         }
         known = Set(files.map(\.path))
         if !first { onChange() }
@@ -169,12 +192,16 @@ final class ScreenshotWatcher {
     }
 
     private func isCandidate(_ url: URL) -> Bool {
+        // Desktop management takes every file. iCloud's data-less
+        // placeholders for files moved off this Mac ("name.md.icloud")
+        // are not among them.
+        if acceptsAnyFile { return url.pathExtension.lowercased() != "icloud" }
         if isRecording(url) { return acceptsRecordings }
         guard Self.imageExtensions.contains(url.pathExtension.lowercased()) else { return false }
-        return onlyTaggedScreenshots ? isScreenCapture(url) : true
+        return onlyTaggedScreenshots ? Self.isScreenCapture(url) : true
     }
 
-    private func isScreenCapture(_ url: URL) -> Bool {
+    static func isScreenCapture(_ url: URL) -> Bool {
         url.withUnsafeFileSystemRepresentation { path in
             guard let path else { return false }
             return getxattr(path, "com.apple.metadata:kMDItemIsScreenCapture", nil, 0, 0, 0) >= 0
