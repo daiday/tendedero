@@ -43,8 +43,6 @@
 "Hang copied images" = "挂上复制的图片";
 "Images you copy hang on the line too" = "复制的图片也会挂上绳";
 "Tendedero, hanging copied images" = "Tendedero，正在挂上复制的图片";
-"Hang Desktop files" = "挂上桌面文件";
-"Every file on your Desktop hangs on the line. The cross moves it to the Trash." = "桌面上的每个文件都会挂上晾衣绳，角上的叉号会把它移入废纸篓。";
 
 /* GrabArea */
 "Copy" = "复制";

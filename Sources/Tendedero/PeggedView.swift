@@ -86,10 +86,9 @@ struct PeggedView: View {
             .opacity(dragging ? 0.45 : 1)
             .overlay(alignment: .topLeading) {
                 // Drawn here, clicked through GrabView, which sits on top. A
-                // cross sends a file the line takes care of — in Tendedero's
-                // folder or on the Desktop — to the Trash; a file in a watched
-                // folder only comes off the line.
-                Image(systemName: line.isManaged(item.id) ? "xmark" : "eye.slash")
+                // cross sends a file in Tendedero's folder to the Trash; for a
+                // file anywhere else it only hides it from the line.
+                Image(systemName: line.isInInbox(item.id) ? "xmark" : "eye.slash")
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(.primary)
                     .frame(width: 20, height: 20)

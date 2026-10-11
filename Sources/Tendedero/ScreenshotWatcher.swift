@@ -39,10 +39,10 @@ final class ScreenshotWatcher {
 
     /// Watches the folder macOS saves screenshots to, or a given folder.
     /// `anyImage` takes every new image even on the Desktop, for a folder
-    /// the user chose to watch. `anyFile` takes every new file, and only
-    /// means anything on the Desktop, where the line is in charge of
-    /// everything; `adoptExisting` hands the files that were already there
-    /// to `onExisting` instead of passing them by.
+    /// the user chose to watch. `anyFile` takes every new file, for
+    /// Tendedero's own folder, which is the line's warehouse; with it,
+    /// `adoptExisting` hands the files that were already there to
+    /// `onExisting` instead of passing them by.
     init(folder: URL? = nil, anyImage: Bool = false, anyFile: Bool = false,
          adoptExisting: Bool = false,
          onNew: @escaping (URL) -> Void,
@@ -54,7 +54,7 @@ final class ScreenshotWatcher {
         self.folder = folder ?? Self.screenshotFolder()
         let path = self.folder.standardizedFileURL.path
         let isDesktop = path == Self.desktop.standardizedFileURL.path
-        acceptsAnyFile = anyFile && isDesktop
+        acceptsAnyFile = anyFile
         onlyTaggedScreenshots = !anyImage && !acceptsAnyFile && isDesktop
         acceptsRecordings = path == Inbox.folder.standardizedFileURL.path
         adoptsExisting = adoptExisting && acceptsAnyFile
@@ -192,16 +192,16 @@ final class ScreenshotWatcher {
     }
 
     private func isCandidate(_ url: URL) -> Bool {
-        // Desktop management takes every file. iCloud's data-less
-        // placeholders for files moved off this Mac ("name.md.icloud")
-        // are not among them.
+        // The warehouse takes every file. iCloud's data-less placeholders
+        // for files moved off this Mac ("name.md.icloud") are not among
+        // them.
         if acceptsAnyFile { return url.pathExtension.lowercased() != "icloud" }
         if isRecording(url) { return acceptsRecordings }
         guard Self.imageExtensions.contains(url.pathExtension.lowercased()) else { return false }
-        return onlyTaggedScreenshots ? Self.isScreenCapture(url) : true
+        return onlyTaggedScreenshots ? isScreenCapture(url) : true
     }
 
-    static func isScreenCapture(_ url: URL) -> Bool {
+    private func isScreenCapture(_ url: URL) -> Bool {
         url.withUnsafeFileSystemRepresentation { path in
             guard let path else { return false }
             return getxattr(path, "com.apple.metadata:kMDItemIsScreenCapture", nil, 0, 0, 0) >= 0

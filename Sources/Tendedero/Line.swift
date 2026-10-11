@@ -21,8 +21,7 @@ struct Pegged: Identifiable, Equatable {
     /// A video of any kind, a movie off the Desktop included: it hangs as
     /// its first frame with a play button over it.
     var isVideo: Bool { PaperCard.videoExtensions.contains(url.pathExtension.lowercased()) }
-    /// Not a photo, a video or a recording: another Desktop file, hung as
-    /// a paper card.
+    /// Not a photo or a video: a document, hung as a paper card.
     var isDocument: Bool { !isVideo && !isImageFile(url) }
 
     static func == (a: Pegged, b: Pegged) -> Bool {
@@ -107,9 +106,9 @@ final class Line: ObservableObject {
         items[i].flying = false
     }
 
-    /// The files that were already on the Desktop when watching began, hung
-    /// quietly: no flight, no sound, and none is pushed off a full line.
-    /// What does not fit simply stays on the Desktop, off the line.
+    /// The files that were already in the warehouse when watching began,
+    /// hung quietly: no flight, no sound, and none is pushed off a full
+    /// line. What does not fit simply waits in the warehouse.
     func adopt(_ urls: [URL]) {
         let hanging = Set(items.filter { !$0.falling }.map(\.url))
         let room = max(0, maxItems - liveCount)
@@ -173,17 +172,6 @@ final class Line: ObservableObject {
         }
     }
 
-    /// When Desktop watching is turned off, its files come off the line.
-    /// Screenshots stay: they hang on their own. The files themselves are
-    /// left where they are, as ever.
-    func unhangDesktopDocuments() {
-        for item in items
-        where !item.falling && isOnDesktop(item.id)
-            && !ScreenshotWatcher.isScreenCapture(item.url) && !isRecording(item.url) {
-            drop(item.id, quietly: true)
-        }
-    }
-
     // MARK: Actions on one photo
 
     func copy(_ id: UUID) {
@@ -237,31 +225,17 @@ final class Line: ObservableObject {
         contentsOfFile: "/System/Library/Components/CoreAudio.component/Contents/SharedSupport/SystemSounds/dock/drag to trash.aif",
         byReference: true)
 
-    /// Whether the file lives in Tendedero's own folder. Those are discarded
-    /// to the Trash, or the folder would fill up with forgotten screenshots.
-    /// Files anywhere else, like the Desktop, stay where they are.
+    /// Whether the file lives in Tendedero's own folder, the warehouse.
+    /// The cross sends those to the Trash, which is how the warehouse
+    /// empties. Files anywhere else, like the Desktop, stay where they are.
     func isInInbox(_ id: UUID) -> Bool {
         guard let item = items.first(where: { $0.id == id }) else { return false }
         return item.url.standardizedFileURL.path.hasPrefix(Inbox.folder.standardizedFileURL.path + "/")
     }
 
-    /// Whether the file is on the Desktop the line watches over.
-    func isOnDesktop(_ id: UUID) -> Bool {
-        guard let item = items.first(where: { $0.id == id }) else { return false }
-        return item.url.standardizedFileURL.path
-            .hasPrefix(ScreenshotWatcher.desktop.standardizedFileURL.path + "/")
-    }
-
-    /// Files the line takes care of: Tendedero's own, and the Desktop's.
-    /// The cross on one of them moves the file to the Trash; on a file from
-    /// a watched folder it only takes it off the line.
-    func isManaged(_ id: UUID) -> Bool {
-        isInInbox(id) || isOnDesktop(id)
-    }
-
     /// The corner cross and "Take down" both end up here.
     func discard(_ id: UUID, quietly: Bool = false) {
-        if isManaged(id) { trash(id, quietly: quietly) } else { drop(id, quietly: quietly) }
+        if isInInbox(id) { trash(id, quietly: quietly) } else { drop(id, quietly: quietly) }
     }
 
     /// The oldest photo falling off a full line. Like the cross, a file from
@@ -283,8 +257,10 @@ final class Line: ObservableObject {
         scroll = 0
     }
 
+    /// The oldest photo falling off a full line. It only leaves the line:
+    /// what a file does is the user's call, never the line's. The warehouse
+    /// keeps what is not hanging; only the cross empties it, into the Trash.
     private func letGo(_ id: UUID) {
-        if isInInbox(id), trash(id, quietly: true) { return }
         drop(id, quietly: true)
     }
 

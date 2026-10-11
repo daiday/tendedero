@@ -60,7 +60,7 @@ struct GrabArea: NSViewRepresentable {
                 menu.addItem(ClosureMenuItem(L("Save to Desktop")) { line.saveToDesktop(id) })
             }
             menu.addItem(.separator())
-            if line.isManaged(id) {
+            if inInbox {
                 menu.addItem(ClosureMenuItem(L("Discard")) { line.discard(id) })
             } else {
                 menu.addItem(ClosureMenuItem(L("Take down")) { line.discard(id) })

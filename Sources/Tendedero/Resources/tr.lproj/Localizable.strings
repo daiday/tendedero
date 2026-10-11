@@ -43,8 +43,6 @@
 "Hang copied images" = "Kopyalanan görselleri as";
 "Images you copy hang on the line too" = "Kopyaladığınız görseller de ipe asılır";
 "Tendedero, hanging copied images" = "Tendedero, kopyalanan görselleri asıyor";
-"Hang Desktop files" = "Masaüstü dosyalarını as";
-"Every file on your Desktop hangs on the line. The cross moves it to the Trash." = "Masaüstünüzdeki her dosya ipe asılır. Çarpı işareti onu Çöp Kutusu'na taşır.";
 
 /* GrabArea */
 "Copy" = "Kopyala";
